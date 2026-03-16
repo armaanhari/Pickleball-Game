@@ -6,6 +6,7 @@ const MIN_BALL_SPEED = 4, MAX_BALL_SPEED = 14;
 const MAX_HAND_SPEED = 35, SPEED_LERP = 0.4, PADDLE_LERP = 0.2;
 const POINT_PAUSE_FRAMES = 90;
 const WIN_SCORE = 11;
+const GAME_OVER_FRAMES = 180; // 3s then auto-return to menu
 
 // ── Sketch ─────────────────────────────────────────────────────────────────
 new p5((p) => {
@@ -35,6 +36,7 @@ new p5((p) => {
   let pointWinner = null;
   let pointTimer = 0;
   let gameWinner = null;
+  let gameOverTimer = 0;
 
   // Hit flash
   let hitFlash = { active: false, side: null, timer: 0 };
@@ -85,9 +87,6 @@ new p5((p) => {
       else if (inBtn(BTN.medium)) { aiDifficulty = "medium"; startGame(); }
       else if (inBtn(BTN.hard))   { aiDifficulty = "hard";   startGame(); }
       else if (inBtn(BTN.back))   { gamePhase = "menu"; }
-    } else if (gamePhase === "gameover") {
-      if (inBtn(BTN.replay))      { startGame(); }
-      else if (inBtn(BTN.toMenu)) { window.goToMenu(); }
     }
   };
 
@@ -246,7 +245,11 @@ new p5((p) => {
       return;
     }
 
-    if (gamePhase === "gameover") return;
+    if (gamePhase === "gameover") {
+      gameOverTimer--;
+      if (gameOverTimer <= 0) window.goToMenu();
+      return;
+    }
 
     // ── Playing ──
     ballTrail.unshift({ x: ball.x, y: ball.y });
@@ -597,15 +600,17 @@ new p5((p) => {
     p.fill(rgb[0], rgb[1], rgb[2]);
     p.textSize(54);
     p.textStyle(p.BOLD);
-    p.text(winLabel, W / 2, H / 2 - 60);
+    p.text(winLabel, W / 2, H / 2 - 40);
 
     p.fill(200, 200, 200);
     p.textSize(24);
     p.textStyle(p.NORMAL);
-    p.text(`${scores.p1}  —  ${scores.p2}`, W / 2, H / 2 + 5);
+    p.text(`${scores.p1}  —  ${scores.p2}`, W / 2, H / 2 + 20);
 
-    drawBtn(BTN.replay, "Play Again",    [77, 166, 255]);
-    drawBtn(BTN.toMenu, "Back to Menu",  [160, 120, 200]);
+    let secs = Math.ceil(gameOverTimer / 60);
+    p.fill(130, 130, 150);
+    p.textSize(16);
+    p.text(`Returning to menu in ${secs}…`, W / 2, H / 2 + 65);
     p.pop();
   }
 
