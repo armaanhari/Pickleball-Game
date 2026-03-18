@@ -55,6 +55,100 @@
       color: #4da6ff;
       background: rgba(77, 166, 255, 0.08);
     }
+    #nav-powerups {
+      background: none;
+      border: 1px solid #333;
+      color: #bbb;
+      font-family: inherit;
+      font-size: 0.8rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 5px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: border-color 0.15s, color 0.15s, background 0.15s;
+      margin-right: 8px;
+    }
+    #nav-powerups:hover {
+      border-color: #50dc50;
+      color: #50dc50;
+      background: rgba(80, 220, 80, 0.08);
+    }
+
+    /* ── Power-up modal ── */
+    #pu-modal-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.65);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+    }
+    #pu-modal-backdrop.open { display: flex; }
+    #pu-modal {
+      background: #13131f;
+      border: 1px solid #2a2a42;
+      border-radius: 12px;
+      padding: 26px 30px 22px;
+      width: 380px;
+      max-width: 95vw;
+    }
+    #pu-modal h2 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #fff;
+      margin-bottom: 18px;
+    }
+    .pu-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+    .pu-badge {
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.65rem;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      flex-shrink: 0;
+      color: #000;
+    }
+    .pu-info strong {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: #eee;
+      margin-bottom: 2px;
+    }
+    .pu-info span {
+      font-size: 0.78rem;
+      color: #888;
+      line-height: 1.45;
+    }
+    #pu-close {
+      margin-top: 18px;
+      width: 100%;
+      padding: 9px;
+      background: #1e1e30;
+      border: 1px solid #333;
+      border-radius: 8px;
+      color: #bbb;
+      font-family: inherit;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    #pu-close:hover { background: #2a2a42; color: #fff; }
 
     /* ── HUD ── */
     #hud {
@@ -107,9 +201,46 @@
 </head>
 <body>
 
+  <!-- Power-up guide modal -->
+  <div id="pu-modal-backdrop" onclick="if(event.target===this)this.classList.remove('open')">
+    <div id="pu-modal">
+      <h2>⚡ Power-ups Guide</h2>
+      <div class="pu-row">
+        <div class="pu-badge" style="background:#50dc50;">BIG</div>
+        <div class="pu-info">
+          <strong>Big Paddle</strong>
+          <span>Your paddle grows to 1.6× its normal height for 5 seconds.</span>
+        </div>
+      </div>
+      <div class="pu-row">
+        <div class="pu-badge" style="background:#ffdc32;">SPD</div>
+        <div class="pu-info">
+          <strong>Speed Burst</strong>
+          <span>Your next hit launches the ball at maximum speed, regardless of hand movement.</span>
+        </div>
+      </div>
+      <div class="pu-row">
+        <div class="pu-badge" style="background:#ff4646;">SHR</div>
+        <div class="pu-info">
+          <strong>Shrink</strong>
+          <span>Your opponent's paddle shrinks to half its normal height for 4 seconds.</span>
+        </div>
+      </div>
+      <div class="pu-row" style="margin-bottom:0; padding-top:6px; border-top:1px solid #1e1e2e;">
+        <div class="pu-info">
+          <span>Power-ups appear on the court every ~7 seconds. The ball collects them — whichever player last hit the ball gets the effect.</span>
+        </div>
+      </div>
+      <button id="pu-close" onclick="document.getElementById('pu-modal-backdrop').classList.remove('open')">Got it</button>
+    </div>
+  </div>
+
   <nav id="nav">
     <span id="nav-title">Pickleball <span>Pong</span></span>
-    <button id="nav-home" onclick="window.goToMenu && window.goToMenu()">⌂ Home</button>
+    <div>
+      <button id="nav-powerups" onclick="document.getElementById('pu-modal-backdrop').classList.add('open')">⚡ Power-ups</button>
+      <button id="nav-home" onclick="window.goToMenu && window.goToMenu()">⌂ Home</button>
+    </div>
   </nav>
 
   <div id="hud">

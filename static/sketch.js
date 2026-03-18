@@ -31,8 +31,9 @@ new p5((p) => {
   // Scores
   let scores = { p1: 0, p2: 0 };
 
-  // Game phase: "menu" | "difficulty" | "waiting" | "playing" | "point" | "gameover"
+  // Game phase: "menu" | "difficulty" | "waiting" | "playing" | "paused" | "point" | "gameover"
   let gamePhase = "menu";
+  let prevPhase = null;
   let pointWinner = null;
   let pointTimer = 0;
   let gameWinner = null;
@@ -40,6 +41,224 @@ new p5((p) => {
 
   // Hit flash
   let hitFlash = { active: false, side: null, timer: 0 };
+
+  // ── Audio ──────────────────────────────────────────────────────────────────
+  let audioCtx = null;
+
+  function ensureAudio() {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (audioCtx.state === "suspended") audioCtx.resume();
+  }
+
+  function playPaddleHit() {
+    if (!audioCtx) return;
+    let osc = audioCtx.createOscillator();
+    let gain = audioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.type = "square";
+    let t = audioCtx.currentTime;
+    osc.frequency.setValueAtTime(220, t);
+    osc.frequency.linearRampToValueAtTime(80, t + 0.06);
+    gain.gain.setValueAtTime(0.18, t);
+    gain.gain.linearRampToValueAtTime(0, t + 0.06);
+    osc.start(t);
+    osc.stop(t + 0.06);
+  }
+
+  function playScorePoint() {
+    if (!audioCtx) return;
+    let t = audioCtx.currentTime;
+    [[523, 0], [784, 0.18]].forEach(([freq, delay]) => {
+      let osc = audioCtx.createOscillator();
+      let gain = audioCtx.createGain();
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, t + delay);
+      gain.gain.setValueAtTime(0.22, t + delay);
+      gain.gain.linearRampToValueAtTime(0, t + delay + 0.3);
+      osc.start(t + delay);
+      osc.stop(t + delay + 0.3);
+    });
+  }
+
+  function playGameOver() {
+    if (!audioCtx) return;
+    let t = audioCtx.currentTime;
+    [523, 659, 784].forEach((freq, i) => {
+      let osc = audioCtx.createOscillator();
+      let gain = audioCtx.createGain();
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, t + i * 0.13);
+      gain.gain.setValueAtTime(0.2, t + i * 0.13);
+      gain.gain.linearRampToValueAtTime(0, t + i * 0.13 + 0.6);
+      osc.start(t + i * 0.13);
+      osc.stop(t + i * 0.13 + 0.6);
+    });
+  }
+
+  function playPowerUp() {
+    if (!audioCtx) return;
+    let osc = audioCtx.createOscillator();
+    let gain = audioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.type = "sine";
+    let t = audioCtx.currentTime;
+    osc.frequency.setValueAtTime(400, t);
+    osc.frequency.linearRampToValueAtTime(900, t + 0.15);
+    gain.gain.setValueAtTime(0.2, t);
+    gain.gain.linearRampToValueAtTime(0, t + 0.15);
+    osc.start(t);
+    osc.stop(t + 0.15);
+  }
+
+  // ── Power-ups ──────────────────────────────────────────────────────────────
+  let currentPowerUp = null;       // { x, y, type, framesLeft }
+  let powerUpSpawnTimer = 0;
+  let activeEffects = [];          // [{ type, target, framesLeft }]
+  let lastHitBy = "p1";
+  let speedBurstPending = { p1: false, p2: false };
+
+  const POWERUP_TYPES = ["bigPaddle", "speedBurst", "shrink"];
+  const POWERUP_COLORS = { bigPaddle: [80, 220, 80], speedBurst: [255, 220, 50], shrink: [255, 70, 70] };
+  const POWERUP_LABELS = { bigPaddle: "BIG", speedBurst: "SPD", shrink: "SHR" };
+  const POWERUP_SPAWN_INTERVAL = 420; // ~7s at 60fps
+
+  function resetPowerUps() {
+    currentPowerUp = null;
+    powerUpSpawnTimer = POWERUP_SPAWN_INTERVAL;
+    activeEffects = [];
+    speedBurstPending = { p1: false, p2: false };
+  }
+
+  function getEffectivePaddleH(player) {
+    let scale = 1;
+    for (let eff of activeEffects) {
+      if (eff.target !== player) continue;
+      if (eff.type === "bigPaddle") scale = Math.max(scale, 1.6);
+      if (eff.type === "shrink")    scale = Math.min(scale, 0.5);
+    }
+    return PADDLE_H * scale;
+  }
+
+  function spawnPowerUp() {
+    let type = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
+    // Spawn in the middle 60% of the court horizontally, avoid near paddles
+    let x = p.random(W * 0.2, W * 0.8);
+    let y = p.random(60, H - 60);
+    currentPowerUp = { x, y, type, framesLeft: 600 }; // disappears after 10s
+  }
+
+  function applyPowerUp(type, collector) {
+    let opponent = collector === "p1" ? "p2" : "p1";
+    playPowerUp();
+
+    if (type === "speedBurst") {
+      speedBurstPending[collector] = true;
+      return;
+    }
+
+    let target = (type === "shrink") ? opponent : collector;
+    let duration = (type === "bigPaddle") ? 300 : 240;
+
+    // Remove existing same-type effect on same target (reset timer instead of stacking)
+    activeEffects = activeEffects.filter(e => !(e.type === type && e.target === target));
+    activeEffects.push({ type, target, framesLeft: duration });
+  }
+
+  function updatePowerUps() {
+    // Spawn timer
+    powerUpSpawnTimer--;
+    if (powerUpSpawnTimer <= 0 && !currentPowerUp) {
+      spawnPowerUp();
+      powerUpSpawnTimer = POWERUP_SPAWN_INTERVAL;
+    }
+
+    // Tick power-up lifetime
+    if (currentPowerUp) {
+      currentPowerUp.framesLeft--;
+      if (currentPowerUp.framesLeft <= 0) {
+        currentPowerUp = null;
+      } else {
+        // Check ball collision
+        let dx = ball.x - currentPowerUp.x;
+        let dy = ball.y - currentPowerUp.y;
+        if (Math.sqrt(dx * dx + dy * dy) < BALL_R + 14) {
+          applyPowerUp(currentPowerUp.type, lastHitBy);
+          currentPowerUp = null;
+        }
+      }
+    }
+
+    // Tick active effects
+    activeEffects = activeEffects.filter(e => {
+      e.framesLeft--;
+      return e.framesLeft > 0;
+    });
+  }
+
+  function drawPowerUp() {
+    if (!currentPowerUp) return;
+    p.push();
+    let { x, y, type, framesLeft } = currentPowerUp;
+    let rgb = POWERUP_COLORS[type];
+    let pulse = 0.7 + 0.3 * Math.sin(p.frameCount * 0.12);
+
+    // Glow
+    p.noStroke();
+    p.fill(rgb[0], rgb[1], rgb[2], 40 * pulse);
+    p.ellipse(x, y, 50 * pulse, 50 * pulse);
+
+    // Body
+    p.fill(rgb[0], rgb[1], rgb[2], 200);
+    p.ellipse(x, y, 28, 28);
+
+    // Label
+    p.fill(0);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(9);
+    p.textStyle(p.BOLD);
+    p.text(POWERUP_LABELS[type], x, y);
+    p.pop();
+  }
+
+  function drawActiveEffects() {
+    p.push();
+    p.noStroke();
+    ["p1", "p2"].forEach(player => {
+      let playerEffects = activeEffects.filter(e => e.target === player);
+      let barW = 50;
+      let bx = player === "p1" ? PADDLE_OFFSET : W - PADDLE_OFFSET - PADDLE_W - barW;
+      let by = H - 36;
+
+      playerEffects.forEach((eff, i) => {
+        let rgb = POWERUP_COLORS[eff.type];
+        let maxDur = eff.type === "bigPaddle" ? 300 : 240;
+        let fillFrac = eff.framesLeft / maxDur;
+        let rowY = by - i * 10;
+
+        p.fill(30, 30, 50);
+        p.rect(bx, rowY, barW, 6, 2);
+        p.fill(rgb[0], rgb[1], rgb[2]);
+        p.rect(bx, rowY, barW * fillFrac, 6, 2);
+      });
+
+      // speedBurst pending indicator
+      if (speedBurstPending[player]) {
+        let rgb = POWERUP_COLORS.speedBurst;
+        let ix = player === "p1" ? PADDLE_OFFSET : W - PADDLE_OFFSET - PADDLE_W - barW;
+        p.fill(rgb[0], rgb[1], rgb[2], 160 + 80 * Math.sin(p.frameCount * 0.25));
+        p.rect(ix, by - playerEffects.length * 10, barW, 6, 2);
+      }
+    });
+    p.pop();
+  }
 
   // ── Button layout ─────────────────────────────────────────────────────────
   const BTN = {
@@ -79,6 +298,7 @@ new p5((p) => {
 
   // ── Mouse input ───────────────────────────────────────────────────────────
   p.mousePressed = function () {
+    ensureAudio();
     if (gamePhase === "menu") {
       if (inBtn(BTN.hvh))     { gameMode = "hvh"; startGame(); }
       else if (inBtn(BTN.ai)) { gameMode = "ai";  gamePhase = "difficulty"; }
@@ -90,6 +310,21 @@ new p5((p) => {
     }
   };
 
+  // ── Keyboard input ────────────────────────────────────────────────────────
+  p.keyPressed = function () {
+    ensureAudio();
+    let k = p.key;
+    if ((k === 'p' || k === 'P' || p.keyCode === p.ESCAPE)) {
+      if (gamePhase === "playing") {
+        prevPhase = gamePhase;
+        gamePhase = "paused";
+      } else if (gamePhase === "paused") {
+        gamePhase = prevPhase || "playing";
+        prevPhase = null;
+      }
+    }
+  };
+
   function inBtn(btn) {
     return p.mouseX >= btn.x && p.mouseX <= btn.x + btn.w &&
            p.mouseY >= btn.y && p.mouseY <= btn.y + btn.h;
@@ -98,8 +333,10 @@ new p5((p) => {
   function startGame() {
     scores = { p1: 0, p2: 0 };
     gameWinner = null;
+    prevPhase = null;
     updateScoreDOM();
     updateLabelsDOM();
+    resetPowerUps();
     gamePhase = "waiting";
     updateStatusMsg();
   }
@@ -109,6 +346,7 @@ new p5((p) => {
     scores = { p1: 0, p2: 0 };
     gameWinner = null;
     pointWinner = null;
+    prevPhase = null;
     updateScoreDOM();
     document.getElementById("label-p1").textContent = "Player 1";
     document.getElementById("label-p2").textContent = "Player 2";
@@ -126,14 +364,17 @@ new p5((p) => {
     drawNet();
     drawPaddle("p1");
     drawPaddle("p2");
-    if (gamePhase === "playing") drawBall();
+    if (gamePhase === "playing" || gamePhase === "paused") drawBall();
+    drawPowerUp();
+    drawActiveEffects();
     drawSpeedBar("p1");
     if (gameMode === "hvh") drawSpeedBar("p2");
 
     // Overlays
-    if (gamePhase === "menu")        drawMenuOverlay();
+    if (gamePhase === "menu")            drawMenuOverlay();
     else if (gamePhase === "difficulty") drawDifficultyOverlay();
     else if (gamePhase === "waiting")    drawWaitingOverlay();
+    else if (gamePhase === "paused")     drawPausedOverlay();
     else if (gamePhase === "point")      drawPointOverlay();
     else if (gamePhase === "gameover")   drawGameOverOverlay();
 
@@ -218,9 +459,11 @@ new p5((p) => {
     if (gamePhase === "menu" || gamePhase === "difficulty") return;
 
     // AI always tracks, even during point pause (so it's in position)
-    if (gameMode === "ai" && gamePhase !== "waiting" && gamePhase !== "gameover") {
+    if (gameMode === "ai" && gamePhase !== "waiting" && gamePhase !== "gameover" && gamePhase !== "paused") {
       updateAI();
     }
+
+    if (gamePhase === "paused") return;
 
     if (gamePhase === "waiting") {
       updateStatusMsg();
@@ -264,6 +507,8 @@ new p5((p) => {
     checkPaddleHit("p1");
     checkPaddleHit("p2");
 
+    updatePowerUps();
+
     if (ball.x - BALL_R < 0)  scorePoint("p2");
     else if (ball.x + BALL_R > W) scorePoint("p1");
   }
@@ -289,18 +534,28 @@ new p5((p) => {
       facingRight = false;
     }
 
+    let effH = getEffectivePaddleH(player);
     let paddleLeft   = paddleX - PADDLE_W / 2;
     let paddleRight  = paddleX + PADDLE_W / 2;
-    let paddleTop    = t.y - PADDLE_H / 2;
-    let paddleBottom = t.y + PADDLE_H / 2;
+    let paddleTop    = t.y - effH / 2;
+    let paddleBottom = t.y + effH / 2;
 
     let overlap = (ball.x + BALL_R > paddleLeft)  && (ball.x - BALL_R < paddleRight) &&
                   (ball.y + BALL_R > paddleTop)    && (ball.y - BALL_R < paddleBottom);
     let movingToward = facingRight ? ball.vx < 0 : ball.vx > 0;
     if (!overlap || !movingToward) return;
 
-    let newSpeed = mapSpeed(t.speed);
-    let hitPos = p.constrain((ball.y - t.y) / (PADDLE_H / 2), -1, 1);
+    lastHitBy = player;
+
+    let newSpeed;
+    if (speedBurstPending[player]) {
+      newSpeed = MAX_BALL_SPEED;
+      speedBurstPending[player] = false;
+    } else {
+      newSpeed = mapSpeed(t.speed);
+    }
+
+    let hitPos = p.constrain((ball.y - t.y) / (effH / 2), -1, 1);
     ball.vx = facingRight ? newSpeed : -newSpeed;
     ball.vy = hitPos * newSpeed * 0.7;
 
@@ -311,6 +566,8 @@ new p5((p) => {
     hitFlash.active = true;
     hitFlash.side = player;
     hitFlash.timer = 8;
+
+    playPaddleHit();
   }
 
   function mapSpeed(hs) {
@@ -318,6 +575,11 @@ new p5((p) => {
   }
 
   function scorePoint(winner) {
+    currentPowerUp = null;
+    activeEffects = [];
+    speedBurstPending = { p1: false, p2: false };
+    powerUpSpawnTimer = POWERUP_SPAWN_INTERVAL;
+
     scores[winner]++;
     updateScoreDOM();
 
@@ -325,10 +587,12 @@ new p5((p) => {
       gameWinner = winner;
       gamePhase = "gameover";
       gameOverTimer = GAME_OVER_FRAMES;
+      playGameOver();
     } else {
       pointWinner = winner;
       gamePhase = "point";
       pointTimer = POINT_PAUSE_FRAMES;
+      playScorePoint();
     }
   }
 
@@ -393,6 +657,7 @@ new p5((p) => {
   function drawPaddle(player) {
     p.push();
     let t = tracker[player];
+    let effH = getEffectivePaddleH(player);
     let px, col, glowRGB;
     if (player === "p1") {
       px = PADDLE_OFFSET;
@@ -403,21 +668,21 @@ new p5((p) => {
       col = t.detected ? p.color(255, 110, 180) : p.color(80, 80, 120);
       glowRGB = [255, 110, 180];
     }
-    let py = t.y - PADDLE_H / 2;
+    let py = t.y - effH / 2;
 
     if (hitFlash.active && hitFlash.side === player) {
       p.noStroke();
       p.fill(255, 220, 0, 80);
-      p.rect(px - 6, py - 6, PADDLE_W + 12, PADDLE_H + 12, 6);
+      p.rect(px - 6, py - 6, PADDLE_W + 12, effH + 12, 6);
     }
     if (t.detected) {
       p.noStroke();
       p.fill(glowRGB[0], glowRGB[1], glowRGB[2], 40);
-      p.rect(px - 4, py - 4, PADDLE_W + 8, PADDLE_H + 8, 5);
+      p.rect(px - 4, py - 4, PADDLE_W + 8, effH + 8, 5);
     }
     p.noStroke();
     p.fill(col);
-    p.rect(px, py, PADDLE_W, PADDLE_H, 4);
+    p.rect(px, py, PADDLE_W, effH, 4);
     p.pop();
   }
 
@@ -547,6 +812,25 @@ new p5((p) => {
         p.text("Player 2: show your hand", 3 * W / 4, H / 2);
       }
     }
+    p.pop();
+  }
+
+  function drawPausedOverlay() {
+    p.push();
+    p.fill(0, 0, 0, 160);
+    p.noStroke();
+    p.rect(0, 0, W, H);
+
+    p.textAlign(p.CENTER, p.CENTER);
+    p.fill(255);
+    p.textSize(58);
+    p.textStyle(p.BOLD);
+    p.text("PAUSED", W / 2, H / 2 - 20);
+
+    p.fill(160, 160, 180);
+    p.textSize(17);
+    p.textStyle(p.NORMAL);
+    p.text("Press P or Esc to resume", W / 2, H / 2 + 36);
     p.pop();
   }
 
