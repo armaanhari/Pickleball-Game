@@ -8,12 +8,61 @@ const POINT_PAUSE_FRAMES = 90;
 const WIN_SCORE = 11;
 const GAME_OVER_FRAMES = 180; // 3s then auto-return to menu
 
+const TUTORIAL_STEPS = [
+  {
+    title: "Welcome to Pickleball Pong!",
+    body:  "You control the blue paddle on the LEFT by moving your hand in front of the camera. The AI controls the right paddle. Move your hand up and down to get a feel for it.",
+    trigger: "click",
+  },
+  {
+    title: "Hand Speed = Ball Speed",
+    body:  "When you hit the ball, HOW FAST your hand is moving determines the ball's speed. A slow tap = slow shot. A fast swing = fast shot. Try to feel the difference!",
+    trigger: "click",
+  },
+  {
+    title: "Let's Rally!",
+    body:  "The AI is sitting still. Hit the ball back 3 times to continue. Remember — move your hand fast for a powerful shot!",
+    trigger: "hit_count",
+    count: 3,
+  },
+  {
+    title: "Paddle Angle",
+    body:  "Where the ball hits your paddle changes its angle. Hit near the TOP of your paddle to aim upward; hit near the BOTTOM to aim downward. Use this to aim past the AI!",
+    trigger: "click",
+  },
+  {
+    title: "Scoring",
+    body:  "If the ball passes the opponent's paddle and goes off the edge, YOU score a point. First to 11 wins the match!",
+    trigger: "click",
+  },
+  {
+    title: "Power-ups",
+    body:  "Colored orbs appear mid-court during the game. The ball collects them — and whoever hit the ball last gets the effect!\n\nBIG (green) = bigger paddle for 5s\nSPD (yellow) = next hit is max speed\nSHR (red) = shrinks the opponent's paddle",
+    trigger: "click",
+  },
+  {
+    title: "Pause Anytime",
+    body:  "Press P or Esc at any point during a match to pause the game. Press again to resume.",
+    trigger: "click",
+  },
+  {
+    title: "You're Ready!",
+    body:  "Time for a real match! You'll play against Easy AI. Use everything you learned — control your speed, aim with your paddle, and grab those power-ups. Good luck!",
+    trigger: "start",
+  },
+];
+
 // ── Sketch ─────────────────────────────────────────────────────────────────
 new p5((p) => {
 
   // Mode
-  let gameMode = "hvh";       // "hvh" | "ai"
+  let gameMode = "hvh";       // "hvh" | "ai" | "tutorial"
   let aiDifficulty = "medium"; // "easy" | "medium" | "hard"
+
+  // Tutorial
+  let tutorialStep = 0;        // 0–7, or 99 = tutorial complete (real game)
+  let tutorialState = "guide"; // "guide" | "playing"
+  let tutorialHitCount = 0;
 
   // Hand tracking
   let video, handPose, hands = [];
@@ -268,8 +317,10 @@ new p5((p) => {
     medium: { x: W / 2 - 78,  y: H / 2 - 38, w: 155, h: 70 },
     hard:   { x: W / 2 + 105, y: H / 2 - 38, w: 155, h: 70 },
     back:   { x: W / 2 - 55,  y: H / 2 + 70, w: 110, h: 38 },
-    replay: { x: W / 2 - 185, y: H / 2 + 65, w: 160, h: 52 },
-    toMenu: { x: W / 2 + 25,  y: H / 2 + 65, w: 160, h: 52 },
+    replay:      { x: W / 2 - 185, y: H / 2 + 65, w: 160, h: 52 },
+    toMenu:      { x: W / 2 + 25,  y: H / 2 + 65, w: 160, h: 52 },
+    tutorial:    { x: W / 2 - 130, y: H / 2 + 52, w: 260, h: 50 },
+    tutContinue: { x: W / 2 - 90,  y: H / 2 + 90, w: 180, h: 44 },
   };
 
   // ── Setup ─────────────────────────────────────────────────────────────────
@@ -300,13 +351,29 @@ new p5((p) => {
   p.mousePressed = function () {
     ensureAudio();
     if (gamePhase === "menu") {
-      if (inBtn(BTN.hvh))     { gameMode = "hvh"; startGame(); }
-      else if (inBtn(BTN.ai)) { gameMode = "ai";  gamePhase = "difficulty"; }
+      if (inBtn(BTN.hvh))          { gameMode = "hvh"; startGame(); }
+      else if (inBtn(BTN.ai))      { gameMode = "ai";  gamePhase = "difficulty"; }
+      else if (inBtn(BTN.tutorial)) { startTutorial(); }
     } else if (gamePhase === "difficulty") {
       if (inBtn(BTN.easy))        { aiDifficulty = "easy";   startGame(); }
       else if (inBtn(BTN.medium)) { aiDifficulty = "medium"; startGame(); }
       else if (inBtn(BTN.hard))   { aiDifficulty = "hard";   startGame(); }
       else if (inBtn(BTN.back))   { gamePhase = "menu"; }
+    }
+
+    // Tutorial continue button
+    if (gameMode === "tutorial" && tutorialState === "guide" && gamePhase === "playing") {
+      if (inBtn(BTN.tutContinue)) {
+        ensureAudio();
+        let step = TUTORIAL_STEPS[tutorialStep];
+        if (step.trigger === "start") {
+          advanceTutorial();
+        } else if (step.trigger === "hit_count") {
+          enterTutorialPlayStep();
+        } else {
+          advanceTutorial();
+        }
+      }
     }
   };
 
@@ -341,12 +408,120 @@ new p5((p) => {
     updateStatusMsg();
   }
 
+  function startTutorial() {
+    gameMode = "tutorial";
+    aiDifficulty = "easy";
+    tutorialStep = 0;
+    tutorialState = "guide";
+    tutorialHitCount = 0;
+    scores = { p1: 0, p2: 0 };
+    gameWinner = null;
+    prevPhase = null;
+    updateScoreDOM();
+    updateLabelsDOM();
+    resetPowerUps();
+    gamePhase = "waiting";
+    updateStatusMsg();
+  }
+
+  function advanceTutorial() {
+    tutorialStep++;
+    if (tutorialStep >= TUTORIAL_STEPS.length) {
+      tutorialStep = 99;
+      tutorialState = "playing";
+      scores = { p1: 0, p2: 0 };
+      updateScoreDOM();
+      serveBall();
+      return;
+    }
+    tutorialState = "guide";
+  }
+
+  function enterTutorialPlayStep() {
+    tutorialHitCount = 0;
+    tutorialState = "playing";
+    ball.x = W / 2 + 50;
+    ball.y = H / 2;
+    ball.vx = -6;
+    ball.vy = (Math.random() - 0.5) * 4;
+    ballTrail = [];
+  }
+
+  function updateTutorial() {
+    if (tutorialStep === 2 && tutorialHitCount >= 3) {
+      tutorialState = "guide";
+      advanceTutorial();
+    }
+  }
+
+  function drawTutorialOverlay() {
+    let step = TUTORIAL_STEPS[tutorialStep];
+    if (!step) return;
+    p.push();
+
+    // Semi-dark full-screen overlay
+    p.fill(0, 0, 0, 170);
+    p.noStroke();
+    p.rect(0, 0, W, H);
+
+    // Card
+    let cardW = 560, cardH = 230;
+    let cx = (W - cardW) / 2;
+    let cy = (H - cardH) / 2;
+    p.fill(20, 22, 40, 235);
+    p.stroke(80, 100, 160, 180);
+    p.strokeWeight(1.5);
+    p.rect(cx, cy, cardW, cardH, 12);
+    p.noStroke();
+
+    // Step counter (top-right of card)
+    p.fill(120, 120, 160);
+    p.textAlign(p.RIGHT, p.TOP);
+    p.textSize(13);
+    p.textStyle(p.NORMAL);
+    p.text(`Step ${tutorialStep + 1} of ${TUTORIAL_STEPS.length}`, cx + cardW - 14, cy + 12);
+
+    // Title
+    p.fill(255, 220, 80);
+    p.textAlign(p.LEFT, p.TOP);
+    p.textSize(20);
+    p.textStyle(p.BOLD);
+    p.text(step.title, cx + 20, cy + 16);
+
+    // Body (handle \n by splitting into paragraphs)
+    p.fill(210, 210, 220);
+    p.textSize(14);
+    p.textStyle(p.NORMAL);
+    p.textLeading(20);
+    let lines = step.body.split("\n");
+    let lineY = cy + 52;
+    for (let line of lines) {
+      if (line === "") {
+        lineY += 10;
+      } else {
+        p.text(line, cx + 20, lineY, cardW - 40, 60);
+        // Estimate height: ~20px per line of wrapped text
+        let approxLines = Math.ceil(p.textWidth(line) / (cardW - 40)) || 1;
+        lineY += approxLines * 20 + 4;
+      }
+    }
+
+    // Continue button
+    let btnLabel = step.trigger === "start" ? "Let's Play!" : "Continue →";
+    drawBtn(BTN.tutContinue, btnLabel, [255, 190, 50]);
+
+    p.pop();
+  }
+
   // Exposed so the nav "Home" button can call it from HTML
   window.goToMenu = function () {
     scores = { p1: 0, p2: 0 };
     gameWinner = null;
     pointWinner = null;
     prevPhase = null;
+    tutorialStep = 0;
+    tutorialState = "guide";
+    tutorialHitCount = 0;
     updateScoreDOM();
     document.getElementById("label-p1").textContent = "Player 1";
     document.getElementById("label-p2").textContent = "Player 2";
@@ -364,7 +539,9 @@ new p5((p) => {
     drawNet();
     drawPaddle("p1");
     drawPaddle("p2");
-    if (gamePhase === "playing" || gamePhase === "paused") drawBall();
+    // Hide ball during purely informational tutorial steps (no ball in play yet)
+    let hideBall = gameMode === "tutorial" && tutorialState === "guide" && tutorialStep < 2;
+    if ((gamePhase === "playing" || gamePhase === "paused") && !hideBall) drawBall();
     drawPowerUp();
     drawActiveEffects();
     drawSpeedBar("p1");
@@ -378,6 +555,11 @@ new p5((p) => {
     else if (gamePhase === "point")      drawPointOverlay();
     else if (gamePhase === "gameover")   drawGameOverOverlay();
 
+    // Tutorial guide card (drawn on top of game, below no other overlay)
+    if (gameMode === "tutorial" && tutorialState === "guide" && gamePhase === "playing") {
+      drawTutorialOverlay();
+    }
+
     // Tick hit flash
     if (hitFlash.active) {
       hitFlash.timer--;
@@ -389,14 +571,15 @@ new p5((p) => {
   function updateHandTracking() {
     tracker.p1.detected = false;
     if (gameMode === "hvh") tracker.p2.detected = false;
+    // tutorial & ai modes: p2 is controlled by updateAI(), not hand tracking
 
     for (let hand of hands) {
       if (!hand.keypoints || hand.keypoints.length === 0) continue;
       let wrist = hand.keypoints[0];
       let side = wrist.x < W / 2 ? "p1" : "p2";
 
-      // In AI mode, ignore any hand detected on p2's side
-      if (gameMode === "ai" && side === "p2") continue;
+      // In AI/tutorial mode, ignore any hand detected on p2's side
+      if ((gameMode === "ai" || gameMode === "tutorial") && side === "p2") continue;
 
       let t = tracker[side];
       if (t.detected) continue;
@@ -414,6 +597,24 @@ new p5((p) => {
   function updateAI() {
     let t = tracker.p2;
     t.detected = true;
+
+    // Tutorial: step 2 (rally) = AI stays centered; all other steps = slow but reliable
+    if (gameMode === "tutorial" && tutorialStep !== 99) {
+      if (tutorialStep === 2 && tutorialState === "playing") {
+        t.y = p.lerp(t.y, H / 2, 0.05);
+        t.speed = 0;
+        t.smoothedSpeed = 0;
+      } else {
+        // Track ball accurately but move at easy speed (no random noise)
+        let diff = ball.y - t.y;
+        let move = p.constrain(diff * 0.04, -2.0, 2.0);
+        t.smoothedSpeed = p.lerp(t.smoothedSpeed, Math.abs(move) * 4, SPEED_LERP);
+        t.speed = p.constrain(t.smoothedSpeed, 0, MAX_HAND_SPEED);
+        t.prevY = t.y;
+        t.y += move;
+      }
+      return;
+    }
 
     let targetY = ball.y;
     let maxSpeed, lerpFactor;
@@ -459,7 +660,8 @@ new p5((p) => {
     if (gamePhase === "menu" || gamePhase === "difficulty") return;
 
     // AI always tracks, even during point pause (so it's in position)
-    if (gameMode === "ai" && gamePhase !== "waiting" && gamePhase !== "gameover" && gamePhase !== "paused") {
+    if ((gameMode === "ai" || gameMode === "tutorial") &&
+        gamePhase !== "waiting" && gamePhase !== "gameover" && gamePhase !== "paused") {
       updateAI();
     }
 
@@ -467,13 +669,18 @@ new p5((p) => {
 
     if (gamePhase === "waiting") {
       updateStatusMsg();
-      let ready = gameMode === "ai"
+      let ready = (gameMode === "ai" || gameMode === "tutorial")
         ? tracker.p1.detected
         : (tracker.p1.detected && tracker.p2.detected);
       if (ready) {
         gamePhase = "playing";
-        serveBall();
-        updateStatusMsg();
+        if (gameMode === "tutorial") {
+          tutorialState = "guide";
+          updateStatusMsg();
+        } else {
+          serveBall();
+          updateStatusMsg();
+        }
       }
       return;
     }
@@ -495,6 +702,9 @@ new p5((p) => {
     }
 
     // ── Playing ──
+    // Freeze game while tutorial guide card is visible
+    if (gameMode === "tutorial" && tutorialState === "guide") return;
+
     ballTrail.unshift({ x: ball.x, y: ball.y });
     if (ballTrail.length > 3) ballTrail.pop();
 
@@ -506,6 +716,9 @@ new p5((p) => {
 
     checkPaddleHit("p1");
     checkPaddleHit("p2");
+
+    // Tutorial hit-count tracking
+    if (gameMode === "tutorial" && tutorialStep !== 99) updateTutorial();
 
     updatePowerUps();
 
@@ -547,6 +760,11 @@ new p5((p) => {
 
     lastHitBy = player;
 
+    // Tutorial hit counting
+    if (gameMode === "tutorial" && tutorialState === "playing" && tutorialStep === 2 && player === "p1") {
+      tutorialHitCount++;
+    }
+
     let newSpeed;
     if (speedBurstPending[player]) {
       newSpeed = MAX_BALL_SPEED;
@@ -575,6 +793,12 @@ new p5((p) => {
   }
 
   function scorePoint(winner) {
+    // During tutorial rally step, just re-serve — no scoring
+    if (gameMode === "tutorial" && tutorialStep === 2) {
+      enterTutorialPlayStep();
+      return;
+    }
+
     currentPowerUp = null;
     activeEffects = [];
     speedBurstPending = { p1: false, p2: false };
@@ -604,7 +828,9 @@ new p5((p) => {
 
   function updateLabelsDOM() {
     document.getElementById("label-p1").textContent = "Player 1";
-    document.getElementById("label-p2").textContent = gameMode === "ai" ? "AI" : "Player 2";
+    document.getElementById("label-p2").textContent =
+      gameMode === "tutorial" ? "AI (Tutorial)" :
+      gameMode === "ai"       ? "AI" : "Player 2";
   }
 
   function updateStatusMsg() {
@@ -618,7 +844,7 @@ new p5((p) => {
     // waiting
     if (!tracker.modelReady || !tracker.videoReady) {
       el.textContent = "Loading…";
-    } else if (gameMode === "ai") {
+    } else if (gameMode === "ai" || gameMode === "tutorial") {
       el.textContent = tracker.p1.detected ? "" : "Show your hand to start";
     } else {
       if      (!tracker.p1.detected && !tracker.p2.detected) el.textContent = "Show both hands to start";
@@ -735,8 +961,9 @@ new p5((p) => {
     p.fill(160, 160, 170);
     p.text("First to 11 wins  ·  Hand speed = ball speed", W / 2, H / 2 - 82);
 
-    drawBtn(BTN.hvh, "Human vs Human", [77, 166, 255]);
-    drawBtn(BTN.ai,  "Human vs AI",    [255, 110, 180]);
+    drawBtn(BTN.hvh,      "Human vs Human", [77, 166, 255]);
+    drawBtn(BTN.ai,       "Human vs AI",    [255, 110, 180]);
+    drawBtn(BTN.tutorial, "Tutorial",       [255, 190, 50]);
     p.pop();
   }
 
@@ -789,7 +1016,7 @@ new p5((p) => {
       p.textSize(26);
       p.textStyle(p.NORMAL);
       p.text("Loading hand tracking…", W / 2, H / 2);
-    } else if (gameMode === "ai") {
+    } else if (gameMode === "ai" || gameMode === "tutorial") {
       p.fill(77, 166, 255);
       p.textSize(22);
       p.textStyle(p.NORMAL);
@@ -850,7 +1077,8 @@ new p5((p) => {
       label = "Point — Player 1!";
       rgb = [77, 166, 255];
     } else {
-      label = gameMode === "ai" ? "Point — AI!" : "Point — Player 2!";
+      label = gameMode === "tutorial" ? "Point — AI (Tutorial)!" :
+              gameMode === "ai"       ? "Point — AI!" : "Point — Player 2!";
       rgb = [255, 110, 180];
     }
     p.fill(rgb[0], rgb[1], rgb[2], alpha);
@@ -877,7 +1105,8 @@ new p5((p) => {
       winLabel = "Player 1 Wins!";
       rgb = [77, 166, 255];
     } else {
-      winLabel = gameMode === "ai" ? "AI Wins!" : "Player 2 Wins!";
+      winLabel = gameMode === "tutorial" ? "AI Wins!" :
+                 gameMode === "ai"       ? "AI Wins!" : "Player 2 Wins!";
       rgb = [255, 110, 180];
     }
 
