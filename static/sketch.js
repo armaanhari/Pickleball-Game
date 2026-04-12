@@ -598,12 +598,17 @@ new p5((p) => {
     let t = tracker.p2;
     t.detected = true;
 
-    // Tutorial: step 2 (rally) = AI stays centered; all other steps = slow but reliable
+    // Tutorial: step 2 (rally) = AI tracks ball slowly so it can actually return it;
+    // all other steps = slow but reliable
     if (gameMode === "tutorial" && tutorialStep !== 99) {
       if (tutorialStep === 2 && tutorialState === "playing") {
-        t.y = p.lerp(t.y, H / 2, 0.05);
-        t.speed = 0;
-        t.smoothedSpeed = 0;
+        // Slow, reliable tracking so the ball comes back and a real rally happens
+        let diff = ball.y - t.y;
+        let move = p.constrain(diff * 0.08, -3, 3);
+        t.prevY = t.y;
+        t.y += move;
+        t.smoothedSpeed = p.lerp(t.smoothedSpeed, Math.abs(move) * 4, SPEED_LERP);
+        t.speed = p.constrain(t.smoothedSpeed, 0, MAX_HAND_SPEED);
       } else {
         // Track ball accurately but move at easy speed (no random noise)
         let diff = ball.y - t.y;
@@ -793,9 +798,11 @@ new p5((p) => {
   }
 
   function scorePoint(winner) {
-    // During tutorial rally step, just re-serve — no scoring
+    // During tutorial rally step, re-serve but preserve accumulated hit count
     if (gameMode === "tutorial" && tutorialStep === 2) {
+      let savedCount = tutorialHitCount;
       enterTutorialPlayStep();
+      tutorialHitCount = savedCount;
       return;
     }
 
